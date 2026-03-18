@@ -29,6 +29,32 @@ def col_idx(name: str, cols: List[str]) -> int:
             return i
     raise RuntimeError(f"Metric: {name} not found in cols={cols}")
 
+
+def resolve_source(state, arguments):
+    """Resolve data source: use derived_series if 'source' is specified, otherwise use original timeseries.
+
+    Returns (timeseries, cols) where timeseries is a list of arrays and cols is a list of column names.
+    If source is specified, it looks up state['data_item']['derived_series'][source_key].
+    The derived_series entry should be a dict like: {'cols': [...], 'data': [[...], [...], ...]}
+    """
+    source_key = arguments.get('source', None)
+    if source_key is None:
+        return state['data_item']['timeseries'], state['data_item']['cols']
+
+    derived = state['data_item'].get('derived_series', {})
+    if source_key not in derived:
+        raise ValueError(f"Derived series '{source_key}' not found. Available: {list(derived.keys())}")
+
+    entry = derived[source_key]
+    data = []
+    cols = []
+    for col in entry.keys():
+        cols.append(col)
+        data.append(entry[col])
+    return data, cols
+
+
+
 def forecasting_tool(state, arguments):
     timeseries, cols = state['data_item']['timeseries'], state['data_item']['cols']
     forecaster_name, metric_list, fh_list = arguments['forecaster_name'], arguments['metric_list'], arguments['fh_list']
@@ -54,7 +80,7 @@ def forecasting_tool(state, arguments):
         fh = ForecastingHorizon(list(range(1, fh_list[0] + 1)), is_relative=True)
         forecaster.fit(forecasted_ts, fh=fh)
         point_pred = forecaster.predict()
-        prompt = f"The forecasting results are {point_pred.to_dict(orient='dict')}"
+        return_value = point_pred.to_dict(orient='dict')
     else:
         results = {}
         for i in range(len(metric_list)):
@@ -63,8 +89,8 @@ def forecasting_tool(state, arguments):
             forecaster.fit(forecasted_ts, fh=fh)
             point_pred = forecaster.predict()
             results[metric_list[i]] = point_pred.tolist()
-        prompt = f"The forecasting results are {results}"
-    return prompt
+        return_value = results
+    return return_value, f"The forecasting results are {return_value}"
 
 def anomaly_detection_tool(state, arguments):
     timeseries, cols = state['data_item']['timeseries'], state['data_item']['cols']
@@ -141,14 +167,13 @@ def datapoint_value(state, arguments):
     return f"The datapoint values of timeseries at index {index} are: {results}"
 
 def summary_stats(state, arguments):
-    timeseries, cols = state['data_item']['timeseries'], state['data_item']['cols']
+    timeseries, cols = resolve_source(state, arguments)
     start, end = arguments['start'], arguments['end']
     stat = arguments.get('stat', 'default')
     results = {}
     for col in cols:
         features = {}
         if stat == "mean" or stat == "default":
-            print(timeseries[col_idx(col,cols)][start:end])
             features["mean"] = np.mean(timeseries[col_idx(col,cols)][start:end])
         if stat == "sum" or stat == "default":
             features["sum"] = np.sum(timeseries[col_idx(col,cols)][start:end])
@@ -173,16 +198,19 @@ def return_calc(state, arguments):
         raise ValueError("kind must be 'pct' or 'diff'")
     
 def autocorr(state, arguments):
-    cols, df = state['data_item']['cols'], state['data_item']['df']
+    timeseries, cols = resolve_source(state, arguments)
+    df = pd.DataFrame({
+            col: ts for col, ts in zip(cols, timeseries)
+        })
     lag = arguments['lag']
     corrs = df.apply(lambda col: col.autocorr(lag=lag)).values.tolist()
     results = {}
     for col, corr in zip(cols, corrs):
         results[col] = corr
-    return f"The autocorrelation of timeseries at lag {lag} are: {results}"
+    return results, f"The autocorrelation of timeseries at lag {lag} are: {results}"
 
 def rolling_stat(state, arguments):
-    timeseries, cols = state['data_item']['timeseries'], state['data_item']['cols']
+    timeseries, cols = resolve_source(state, arguments)
     stat, window, step = arguments['stat'], arguments['window'], arguments['step']
     
     stat_funcs = {'mean': np.mean, 'sum': np.sum, 'max': np.max, 'min': np.min, 'std': np.std}
@@ -199,10 +227,10 @@ def rolling_stat(state, arguments):
         stats = func(windows, axis=1)
         results[col] = stats.tolist()
 
-    return f"The rolling {stat} of timeseries with window size {window} and step size {step} are: {results}"
+    return results, f"The rolling {stat} of timeseries with window size {window} and step size {step} are: {results}"
 
 def quantile_value(state, arguments):
-    timeseries, cols = state['data_item']['timeseries'], state['data_item']['cols']
+    timeseries, cols = resolve_source(state, arguments)
     q = arguments['q']
     timeseries = np.asarray(timeseries)
     qs = np.quantile(timeseries, q, axis=1)
@@ -218,7 +246,7 @@ def quantile_value(state, arguments):
     return f"The quantile values of timeseries at quantile {q} are: {results}"
 
 def volatility(state, arguments):
-    timeseries, cols = state['data_item']['timeseries'], state['data_item']['cols']
+    timeseries, cols = resolve_source(state, arguments)
     window = arguments['window']
 
     results = {}
@@ -239,7 +267,7 @@ def volatility(state, arguments):
         vols = np.std(diff_windows, axis=1, ddof=1)  # (n_windows,)
         results[col] = vols.tolist()
 
-    return f"The rolling volatility of timeseries with window size {window} are: {results}"
+    return results, f"The rolling volatility of timeseries with window size {window} are: {results}"
         
 
 def interpolate(state, arguments):
@@ -291,7 +319,7 @@ def interpolate(state, arguments):
 
 
 def differencing(state, arguments):
-    timeseries, cols = state['data_item']['timeseries'], state['data_item']['cols']
+    timeseries, cols = resolve_source(state, arguments)
     order = arguments.get('order', 1)
     channel = arguments.get('channel', None)
 
@@ -301,6 +329,7 @@ def differencing(state, arguments):
     target_cols = [channel] if channel else cols
 
     results = {}
+    return_value = {}
     for col in target_cols:
         ts = np.array(timeseries[col_idx(col, cols)], dtype=np.float64)
         T = len(ts)
@@ -319,8 +348,9 @@ def differencing(state, arguments):
             'differenced_length': len(diff_ts),
             'values': diff_ts.tolist(),
         }
+        return_value[col] = diff_ts.tolist()
 
-    return f"The {order}-order differencing results are: {results}"
+    return return_value, f"The {order}-order differencing results are: {results}"
 
 
 ## Pattern Detector
@@ -357,7 +387,7 @@ def _classify_segment(ts, time_idx, slope_threshold, p_threshold):
             return "flat"
 
 def trend_classifier(state, arguments):
-    timeseries, cols = state['data_item']['timeseries'], state['data_item']['cols']
+    timeseries, cols = resolve_source(state, arguments)
     window = arguments.get('window', None)
     p_threshold = arguments.get('p_threshold', 0.05)
 
@@ -392,7 +422,7 @@ def trend_classifier(state, arguments):
     return f"The trend of timeseries with window size {window} are: {results}"
 
 def seasonality_detector(state, arguments):
-    timeseries, cols = state['data_item']['timeseries'], state['data_item']['cols']
+    timeseries, cols = resolve_source(state, arguments)
     max_period = arguments.get('max_period', 100)
     strong_threshold = arguments.get('strong_threshold', 0.6)
     weak_threshold = arguments.get('weak_threshold', 0.2)
@@ -439,7 +469,7 @@ def seasonality_detector(state, arguments):
     return f"The seasonality of timeseries are: {results}"
 
 def change_point_detector(state, arguments):
-    timeseries, cols = state['data_item']['timeseries'], state['data_item']['cols']
+    timeseries, cols = resolve_source(state, arguments)
     penalty = arguments.get('penalty', None)
     n_cp = arguments.get('n_cp', None)
     cost_func = arguments.get('cost_func', 'l2')
@@ -526,7 +556,7 @@ def _classify_noise_global(ts, max_lag=10, alpha=0.05):
         return "colored"  # generic non-white
 
 def noise_profile(state, arguments):
-    timeseries, cols = state['data_item']['timeseries'], state['data_item']['cols']
+    timeseries, cols = resolve_source(state, arguments)
     window = arguments.get('window', None)
     max_lag = arguments.get('max_lag', 20)
     alpha = arguments.get('alpha', 0.05)
@@ -555,7 +585,7 @@ def noise_profile(state, arguments):
     return f"The noise of timeseries with window size {window} are: {results}"
 
 def stationarity_test(state, arguments):
-    timeseries, cols = state['data_item']['timeseries'], state['data_item']['cols']
+    timeseries, cols = resolve_source(state, arguments)
     test = arguments.get('test', 'adf')
     alpha = arguments.get('alpha', 0.05)
     
@@ -594,7 +624,7 @@ def stationarity_test(state, arguments):
     return f"The stationarity of timeseries are: {results}"
 
 def spike_detector(state, arguments):
-    timeseries, cols = state['data_item']['timeseries'], state['data_item']['cols']
+    timeseries, cols = resolve_source(state, arguments)
     threshold = arguments.get('threshold', 2)
     min_sep = arguments.get('min_sep', 5)
     relative = arguments.get('relative', True)
@@ -830,7 +860,11 @@ forecasting_tool_card = {
             "fh_list": {
                 "type": "list",
                 "description": "A list of integers specifying the forecast horizon (number of future time steps to predict) for each metric in metric_list. If all values are identical, multivariate forecasting is attempted (if supported by the forecaster); otherwise, each metric is forecasted independently."
-            }
+            },
+            "register_as": {
+                "type": "string",
+                "description": "Optional. If provided, the output series will be registered as a derived series with this key, which can be used as 'source' in subsequent tool calls."
+            },
         },
         "required": ["forecaster_name", "metric_list", "fh_list"]
     },
@@ -899,7 +933,15 @@ differencing_tool_card = {
             "channel": {
                 "type": "string",
                 "description": "Optional. Name of a specific channel to difference. If omitted, all channels are processed."
-            }
+            },
+            "source": {
+                "type": "string",
+                "description": "Optional. Key of a derived series to use as input instead of the original timeseries. Available derived series keys are shown in the conversation history."
+            },
+            "register_as": {
+                "type": "string",
+                "description": "Optional. If provided, the output series will be registered as a derived series with this key, which can be used as 'source' in subsequent tool calls."
+            },
         },
         "required": []
     },
@@ -944,7 +986,11 @@ summary_stats_tool_card = {
             "stat": {
                 "type": "string",
                 "description": "Specifies which statistic to compute. Options include 'mean', 'sum', 'min', 'max', 'std', or 'default' (which computes all of them). If omitted, defaults to 'default'."
-            }
+            },
+            "source": {
+                "type": "string",
+                "description": "Optional. Key of a derived series to use as input instead of the original timeseries. Available derived series keys are shown in the conversation history."
+            },
         },
         "required": ["start", "end"]
     },
@@ -980,7 +1026,15 @@ autocorr_tool_card = {
             "lag": {
                 "type": "integer",
                 "description": "The lag at which to compute autocorrelation. Must be a positive integer."
-            }
+            },
+            "source": {
+                "type": "string",
+                "description": "Optional. Key of a derived series to use as input instead of the original timeseries. Available derived series keys are shown in the conversation history."
+            },
+            "register_as": {
+                "type": "string",
+                "description": "Optional. If provided, the output series will be registered as a derived series with this key, which can be used as 'source' in subsequent tool calls."
+            },
         },
         "required": ["lag"]
     },
@@ -1002,7 +1056,15 @@ rolling_stat_tool_card = {
             "step": {
                 "type": "integer",
                 "description": "The step size (stride) between consecutive windows. Must be a positive integer."
-            }
+            },
+            "source": {
+                "type": "string",
+                "description": "Optional. Key of a derived series to use as input instead of the original timeseries. Available derived series keys are shown in the conversation history."
+            },
+            "register_as": {
+                "type": "string",
+                "description": "Optional. If provided, the output series will be registered as a derived series with this key, which can be used as 'source' in subsequent tool calls."
+            },
         },
         "required": ["stat", "window", "step"]
     },
@@ -1016,7 +1078,11 @@ quantile_value_tool_card = {
             "q": {
                 "type": "number",
                 "description": "The quantile or list of quantiles to compute, between 0 and 1 (e.g., 0.5 for median, [0.25, 0.75] for quartiles)."
-            }
+            },
+            "source": {
+                "type": "string",
+                "description": "Optional. Key of a derived series to use as input instead of the original timeseries. Available derived series keys are shown in the conversation history."
+            },
         },
         "required": ["q"]
     },
@@ -1030,7 +1096,15 @@ volatility_tool_card = {
             "window": {
                 "type": "integer",
                 "description": "The size of the rolling window used to compute volatility. Must be at least 2 and no larger than the length of the time series."
-            }
+            },
+            "source": {
+                "type": "string",
+                "description": "Optional. Key of a derived series to use as input instead of the original timeseries. Available derived series keys are shown in the conversation history."
+            },
+            "register_as": {
+                "type": "string",
+                "description": "Optional. If provided, the output series will be registered as a derived series with this key, which can be used as 'source' in subsequent tool calls."
+            },
         },
         "required": ["window"]
     },
@@ -1052,7 +1126,11 @@ trend_classifier_tool_card = {
             "slope_threshold": {
                 "type": "number",
                 "description": "The minimum absolute slope required to consider a trend as non-flat. If not provided, it defaults to 1% of the range (max - min) of the time series."
-            }
+            },
+            "source": {
+                "type": "string",
+                "description": "Optional. Key of a derived series to use as input instead of the original timeseries. Available derived series keys are shown in the conversation history."
+            },
         },
         "required": []
     },
@@ -1074,7 +1152,11 @@ seasonality_detector_tool_card = {
             "weak_threshold": {
                 "type": "number",
                 "description": "Autocorrelation threshold above which seasonality is considered 'weak' (but not strong). Default is 0.2."
-            }
+            },
+            "source": {
+                "type": "string",
+                "description": "Optional. Key of a derived series to use as input instead of the original timeseries. Available derived series keys are shown in the conversation history."
+            },
         },
         "required": []
     },
@@ -1100,7 +1182,11 @@ change_point_detector_tool_card = {
             "strategy": {
                 "type": "string",
                 "description": "Change point detection algorithm to use. Supported values: 'Pelt' (default) or 'Binseg'."
-            }
+            },
+            "source": {
+                "type": "string",
+                "description": "Optional. Key of a derived series to use as input instead of the original timeseries. Available derived series keys are shown in the conversation history."
+            },
         },
         "required": []
     },
@@ -1122,7 +1208,11 @@ noise_profile_tool_card = {
             "alpha": {
                 "type": "number",
                 "description": "Significance level for statistical tests (e.g., Ljung-Box) used in noise classification. Default is 0.05."
-            }
+            },
+            "source": {
+                "type": "string",
+                "description": "Optional. Key of a derived series to use as input instead of the original timeseries. Available derived series keys are shown in the conversation history."
+            },
         },
         "required": []
     },
@@ -1140,7 +1230,11 @@ stationarity_test_tool_card = {
             "alpha": {
                 "type": "number",
                 "description": "Significance level for determining stationarity. Default is 0.05."
-            }
+            },
+            "source": {
+                "type": "string",
+                "description": "Optional. Key of a derived series to use as input instead of the original timeseries. Available derived series keys are shown in the conversation history."
+            },
         },
         "required": []
     },
@@ -1162,7 +1256,11 @@ spike_detector_tool_card = {
             "relative": {
                 "type": "boolean",
                 "description": "If true, threshold is interpreted relative to the standard deviation of the series. If false, threshold is an absolute value. Default is true. Make sure use lower word true/false in json string response."
-            }
+            },
+            "source": {
+                "type": "string",
+                "description": "Optional. Key of a derived series to use as input instead of the original timeseries. Available derived series keys are shown in the conversation history."
+            },
         },
         "required": []
     },
@@ -1348,8 +1446,13 @@ def execute_tool(state, tool_call_json):
         return {"error": f"Tool '{tool_name}' is not registered or does not exist."}
     try:
         tool_func = TOOLBOX[tool_name]
-        result = tool_func(state, arguments)
-        return {"result": result}
+        return_value = tool_func(state, arguments)
+        if isinstance(return_value, str):
+            return {"result": return_value}
+        else:
+            if 'register_as' in arguments:
+                return {"need_save": (arguments['register_as'],return_value[0]) , "result": return_value[1]}
+            return {"result": return_value[1]}
     except TypeError as e:
         return {"error": f"Argument mismatch when calling '{tool_name}': {str(e)}"}
     except Exception as e:

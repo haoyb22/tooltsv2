@@ -92,6 +92,7 @@ To generate your response:
   - Choose and explain the exact tool and arguments to use.
 - Then, output exactly one tool call in the following strict format including the label <tool_start> and <tool_end>:  
   `<tool_start>{"name": "tool_name", "arguments": {"arg1": value1, "arg2": value2, ...}}<tool_end>`
+  - Additional hints: **Cross-tool parameter passing**: Some tools produce derived time series (e.g., rolling_stat, volatility, differencing). You can register their output by adding "register_as": "key_name" in the tool arguments. Then, subsequent tools can use this derived series as input by adding "source": "key_name" in their arguments. Example workflow: 1. Call rolling_stat with register_as="ma_5" to compute and register a 5-point moving average. 2. Call trend_classifier with source="ma_5" to classify the trend of the smoothed series.
 
 Do not output anything else. Do not repeat past useless actions. The entire response must be: [reasoning text][tool_call].
 

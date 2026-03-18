@@ -62,12 +62,8 @@ class Actor(Agent):
             else:
                 tool_call_content = tool_calls[0]
                 tool_call_json = json.loads(tool_call_content.strip())
-                result = execute_tool(state, tool_call_json)
-                print(result)
-                observation = f"<tool_response_start>{json.dumps(result)}<tool_response_end>"
-                history = state['history'] + f"action{state['turn']}: {action}\n" + f"observation{state['turn']}: {observation}\n"
-                return action, observation, history
-            
+                return action, tool_call_json
+                
 class Reflector(Agent):
     def __init__(self, config):
         super().__init__(config)

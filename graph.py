@@ -1,6 +1,7 @@
 from langgraph.graph import StateGraph, START, END
 import pandas as pd
 from agents import Planner, Actor, Reflector, Reporter, Verifier
+from tools import execute_tool
 from utils import DATAPATH_BASE, TSVisualizer, replace_with_indexed_placeholders
 import json
 
@@ -20,9 +21,22 @@ class ToolTSGraph:
         return state
     
     def _act_node(self, state):
-        action, observation, state['history'] = self.actor.run(state)
+        action, tool_call_json = self.actor.run(state)
         state["actions"].append(action)
+        state["tool_calls"].append(tool_call_json)
+        return state
+    
+    def _tool_node(self, state):
+        action = state['actions'][-1]
+        tool_call_json = state['tool_calls'][-1]
+        result = execute_tool(state, tool_call_json)
+        print(result)
+        if 'need_save' in result:
+            k, v = result['need_save'][0], result['need_save'][1]
+            state['data_item']['derived_series'][k] = v
+        observation = f"<tool_response_start>{json.dumps(result)}<tool_response_end>"
         state["observations"].append(observation)
+        state['history'] = state['history'] + f"action{state['turn']}: {action}\n" + f"observation{state['turn']}: {observation}\n"
         return state
     
     def _reflect_node(self, state):
@@ -49,6 +63,7 @@ class ToolTSGraph:
         nodes = {
             "plan": self._plan_node,
             "act": self._act_node,
+            "tool": self._tool_node,
             "reflect": self._reflect_node,
             "report": self._report_node,
             "verify": self._verify_node,
@@ -63,12 +78,14 @@ class ToolTSGraph:
         workflow = StateGraph(dict)
         workflow.add_node("plan", nodes["plan"])
         workflow.add_node("act", nodes["act"])
+        workflow.add_node("tool", nodes["tool"])
         workflow.add_node("reflect", nodes["reflect"])
         workflow.add_node("report", nodes["report"])
         workflow.add_node("verify", nodes["verify"])
         workflow.add_edge(START, "plan")
         workflow.add_edge("plan", "act")
-        workflow.add_edge("act", "reflect")
+        workflow.add_edge("act", "tool")
+        workflow.add_edge("tool", "reflect")
         workflow.add_conditional_edges(
             "reflect",
             edges["should_report"],
@@ -180,11 +197,13 @@ class ToolTSGraph:
                 'df': df,
                 'data': data,
                 'visualizations': [visualization],
+                'derived_series': {},
             },
             'plan': '',
             'tool_intents': [],
             'history': '',
             'actions': [],
+            'tool_calls': [],
             'observations': [],
             'reflections': [],
             'should_report': False,
