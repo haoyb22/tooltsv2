@@ -246,10 +246,11 @@ def solve(context, mode):
 
 argparser = argparse.ArgumentParser()
 argparser.add_argument('--data_path', type=str, default=DATAPATH_BASE+'TimeSeriesExam\qa_dataset.json')
-argparser.add_argument('--result_name', type=str, default='tse_20')
+argparser.add_argument('--result_name', type=str, default='tse_1')
 args = argparser.parse_args()
 data_path = args.data_path
 result_name = args.result_name
+data_num = int(result_name.split('_')[-1])
 
 if data_path.endswith('.csv'):
   df = pd.read_csv(data_path)
@@ -259,7 +260,7 @@ elif data_path.endswith('.json'):
     data = json.load(f)
 all_results = []
 for i, data_item in enumerate(data):
-  if i>=20:
+  if i>=data_num:
     break
   if data_path.endswith('.csv'):
     qa = json.loads('{' + data_item['QA_list'] + '}')

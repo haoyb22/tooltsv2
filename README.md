@@ -19,6 +19,10 @@
 
 ## 6.功能 完成reporter, 补充verifier
 
+## 一些现状与额外任务
+1. 目前全部api相关的在gpt-4o上均尝试，timeart和timetoolbench可行，主agent不稳定。更换5.4-mini在timetoolbench上需修改提示词且不稳定。
+2. 调研到论文更新，去阅读借鉴。
+
 ## claude code建议
 ```
 ToolTS v2 任务报告
@@ -263,8 +267,6 @@ Verifier 检查项：Verifier 可参照 SOP 检查推理链是否遗漏关键分
 4.2.1 已知问题修复
 问题	文件/位置	修复方案	状态
 autocorr lag 参数硬编码	tools.py ~L182	col.autocorr(lag=5) → col.autocorr(lag=lag)	✅ 已修复
-return_calc 接受标量而非时间索引	tools.py	重新设计：接受 (t1, t2) 时间索引，内部自动取值并计算	待实施
-shape_similarity 与 channel_correlation 功能重叠	tools.py	方案一：删除 shape_similarity；方案二：让两者差异化（shape_similarity 做 z-score 归一化后计算）	待决策
 graph.py L91-92 硬编码 hack	graph.py	清理 i==7 的特殊处理	待实施
 4.2.2 工具补充（候选列表）
 基于前期讨论中识别的工具缺口：
