@@ -82,7 +82,8 @@ class ToolTSGraph:
         workflow.add_node("reflect", nodes["reflect"])
         workflow.add_node("report", nodes["report"])
         workflow.add_node("verify", nodes["verify"])
-        workflow.add_edge(START, "plan")
+        workflow.add_edge(START, "verify")
+        workflow.add_edge("verify", "plan")
         workflow.add_edge("plan", "act")
         workflow.add_edge("act", "tool")
         workflow.add_edge("tool", "reflect")
@@ -91,8 +92,7 @@ class ToolTSGraph:
             edges["should_report"],
             ["act", "report"],
         )
-        workflow.add_edge("report", "verify")
-        workflow.add_edge("verify", END)
+        workflow.add_edge("report", END)
         return workflow.compile()
     
     def run(self):
