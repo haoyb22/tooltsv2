@@ -215,6 +215,52 @@ def create_tools_info(mode):
     return tool_context
 
 
+REPORT_INSTRUCTION = """You are a Reporter in a tool-augmented reasoning system for time series analysis. You are given:
+- **DATA**: A Python dictionary representing time series data. Maybe with visualization.
+- **QA**: A time series question and its ground truth answer.
+- **Plan**: The high-level reasoning plan.
+- **History**: The complete reasoning trace in the format:
+  action1 - observation1 - reflection1 - action2 - observation2 - reflection2 - ...
+
+Your task is to write a **final answer** that:
+1. Directly answers the question based on evidence collected in the History.
+2. Cites specific tool observations that support the answer (e.g., "According to the trend_classifier result, ...").
+3. If options are provided, ends with the exact matching option text.
+4. Does NOT introduce any information not present in the History or the given data.
+5. Is concise and clear — no lengthy repetition of the reasoning trace.
+
+Output only the final answer. Do not output any other content.
+
+"""
+
+def create_report_prompt(state):
+    plan = state['plan']
+    history = state['history']
+    data_item = state['data_item']
+    given_qa = prepare_qa(data_item)
+
+    context = f"""
+TIME SERIES DATA (as a Python dict, together with every column/metric/channel):
+{data_item['data']}
+
+VISUALIZATION:
+<visualization>
+
+HINTS:
+{data_item['hints']}
+
+GIVEN QA:
+{given_qa}
+
+Here is the Plan:
+{plan}
+
+Here is the complete History:
+{history}
+"""
+    return REPORT_INSTRUCTION + context
+
+
 VERIFY_INSTRUCTION = """You are an intelligent Time Series Reasoner capable
 of performing time series analysis. 
 Please answer the given question based on the provided data or visualizations.

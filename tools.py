@@ -187,15 +187,24 @@ def summary_stats(state, arguments):
     return f"The summary statistics of timeseries are: {results}"
 
 def return_calc(state, arguments):
+    timeseries, cols = state['data_item']['timeseries'], state['data_item']['cols']
     t1, t2, kind = arguments['t1'], arguments['t2'], arguments['kind']
-    if kind == "diff":
-        return t2 - t1
-    elif kind == "pct":
-        if t1 == 0:
-            raise ValueError("t1 cannot be zero when computing percentage return.")
-        return (t2 - t1) / t1
-    else:
-        raise ValueError("kind must be 'pct' or 'diff'")
+    channel = arguments.get('channel', None)
+    target_cols = [channel] if channel else cols
+    results = {}
+    for col in target_cols:
+        v1 = timeseries[col_idx(col, cols)][t1]
+        v2 = timeseries[col_idx(col, cols)][t2]
+        if kind == "diff":
+            results[col] = v2 - v1
+        elif kind == "pct":
+            if v1 == 0:
+                results[col] = None
+            else:
+                results[col] = (v2 - v1) / v1
+        else:
+            raise ValueError("kind must be 'pct' or 'diff'")
+    return f"The {kind} return between index {t1} and {t2} are: {results}"
     
 def autocorr(state, arguments):
     timeseries, cols = resolve_source(state, arguments)
@@ -998,20 +1007,24 @@ summary_stats_tool_card = {
 }
 
 return_calc_tool_card = {
-    "description": "Calculates the return between two scalar values, either as an absolute difference or a percentage change. Returns a single numeric result.",
+    "description": "Calculates the return between two time indices, either as an absolute difference or a percentage change. Operates on all channels by default.",
     "parameters": {
         "properties": {
             "t1": {
-                "type": "number",
-                "description": "The initial value (baseline) for return calculation."
+                "type": "integer",
+                "description": "The starting time index (baseline)."
             },
             "t2": {
-                "type": "number",
-                "description": "The final value used to compute the return relative to t1."
+                "type": "integer",
+                "description": "The ending time index for return calculation."
             },
             "kind": {
                 "type": "string",
-                "description": "The type of return to compute: 'diff' for absolute difference (t2 - t1), or 'pct' for percentage change ((t2 - t1) / t1)."
+                "description": "The type of return to compute: 'diff' for absolute difference (v2 - v1), or 'pct' for percentage change ((v2 - v1) / v1)."
+            },
+            "channel": {
+                "type": "string",
+                "description": "Optional. Name of a specific channel to compute return for. If omitted, computes for all channels."
             }
         },
         "required": ["t1", "t2", "kind"]

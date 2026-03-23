@@ -31,6 +31,13 @@ class ToolTSGraph:
         tool_call_json = state['tool_calls'][-1]
         result = execute_tool(state, tool_call_json)
         print(result)
+        tool_name = tool_call_json.get('name', 'unknown')
+        success = 'error' not in result
+        state['tool_call_records'].append({
+            'tool': tool_name,
+            'success': success,
+            'error': result.get('error', None),
+        })
         if 'need_save' in result:
             k, v = result['need_save'][0], result['need_save'][1]
             state['data_item']['derived_series'][k] = v
@@ -95,6 +102,30 @@ class ToolTSGraph:
         workflow.add_edge("report", END)
         return workflow.compile()
     
+    def _compute_tool_stats(self, all_results):
+        all_records = [rec for r in all_results for rec in r.get('tool_call_records', [])]
+        total = len(all_records)
+        if total == 0:
+            return {'total_calls': 0, 'success_rate': None, 'per_tool': {}}
+        success = sum(1 for r in all_records if r['success'])
+        per_tool = {}
+        for rec in all_records:
+            t = rec['tool']
+            if t not in per_tool:
+                per_tool[t] = {'total': 0, 'success': 0, 'errors': []}
+            per_tool[t]['total'] += 1
+            if rec['success']:
+                per_tool[t]['success'] += 1
+            elif rec['error']:
+                per_tool[t]['errors'].append(rec['error'])
+        for t in per_tool:
+            per_tool[t]['success_rate'] = per_tool[t]['success'] / per_tool[t]['total']
+        return {
+            'total_calls': total,
+            'success_rate': success / total,
+            'per_tool': per_tool,
+        }
+
     def run(self):
         data = self.read_data()
         all_results = []
@@ -105,8 +136,6 @@ class ToolTSGraph:
             process_num = self.config.get('process_num', 1)
             if i==process_num: break
             state = self.preprocess(s)
-            if i==7 and self.config.get('data_path', DATAPATH_BASE + 'Time-MQA\Open_Ended_QA\open_ended_QA.csv').endswith('.csv'):
-                state['data_item']['answer'] = "The mean of the data points is 30.67. This is calculated by adding all the data points in the series and dividing by the number of points. (21 + 38 + 14 + 16 + 16 + 14 + 15 + 22 + 20 + 15 + 56 + 36 + 28 + 54 + 38 + 42 + 29 + 59 + 49 + 42 + 62 + 38 + 2 + 10) / 24 = 736 / 24 = 30.67."
             state['verify_mode'] = self.config.get('verify_mode', 'skip')
             if self.config.get('debug', False):
                 print("streaming...")
@@ -117,8 +146,10 @@ class ToolTSGraph:
             else:
                 final_state = self.graph.invoke(state)
             all_results.append(final_state)
+        tool_stats = self._compute_tool_stats(all_results)
         return {
             'all_results': all_results,
+            'tool_stats': tool_stats,
         }
     
     def verify(self, mode):
@@ -206,6 +237,7 @@ class ToolTSGraph:
             'tool_calls': [],
             'observations': [],
             'reflections': [],
+            'tool_call_records': [],
             'should_report': False,
             'turn': 0,
             'report': '',

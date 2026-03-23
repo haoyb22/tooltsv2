@@ -5,7 +5,7 @@ import numpy as np
 import json
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
-from prompts import prompt_to_mmcontent, create_plan_prompt, create_act_prompt, create_reflect_prompt, create_verify_prompt
+from prompts import prompt_to_mmcontent, create_plan_prompt, create_act_prompt, create_reflect_prompt, create_report_prompt, create_verify_prompt
 from tools import execute_tool
 
 class Agent:
@@ -100,7 +100,15 @@ class Reporter(Agent):
         super().__init__(config)
 
     def run(self, state):
-        return 'debug'
+        print("reporter run")
+        prompt = create_report_prompt(state)
+        response = self.llm.invoke([
+            SystemMessage(content="You are a helpful assistant."),
+            HumanMessage(content=prompt_to_mmcontent(prompt, state['data_item']['visualizations']))
+        ])
+        report = response.content
+        print(report)
+        return report
     
 class Verifier(Agent):
     def __init__(self, config):
